@@ -98,20 +98,19 @@ async fn fetch_latest_version() -> Result<String> {
 }
 
 async fn download_and_extract(version: &str, dest: &PathBuf) -> Result<()> {
-    // Determine platform
-    let platform = if cfg!(target_os = "windows") {
-        "windows"
+    // Determine platform and asset name
+    let (asset_name, is_tarball) = if cfg!(target_os = "windows") {
+        ("mpf-windows-x64.zip".to_string(), false)
     } else {
-        "linux"
+        ("mpf-linux-x64.tar.gz".to_string(), true)
     };
     
-    let asset_name = format!("mpf-sdk-{}-{}.zip", version, platform);
     let download_url = format!(
         "https://github.com/{}/releases/download/{}/{}",
         GITHUB_REPO, version, asset_name
     );
     
-    println!("Downloading {}...", asset_name);
+    println!("Downloading {} ({})...", asset_name, version);
     
     let client = reqwest::Client::new();
     let resp = client
@@ -138,7 +137,8 @@ async fn download_and_extract(version: &str, dest: &PathBuf) -> Result<()> {
     );
     
     // Download to temp file
-    let temp_path = dest.with_extension("zip.tmp");
+    let temp_ext = if is_tarball { "tar.gz.tmp" } else { "zip.tmp" };
+    let temp_path = dest.with_extension(temp_ext);
     if let Some(parent) = temp_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -158,11 +158,23 @@ async fn download_and_extract(version: &str, dest: &PathBuf) -> Result<()> {
     
     // Extract
     println!("Extracting...");
-    let file = File::open(&temp_path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    
     fs::create_dir_all(dest)?;
-    archive.extract(dest)?;
+    
+    if is_tarball {
+        // Extract tar.gz using tar command (more reliable on Unix)
+        let status = Command::new("tar")
+            .args(["-xzf", &temp_path.to_string_lossy(), "-C", &dest.to_string_lossy()])
+            .status()
+            .context("Failed to run tar command")?;
+        if !status.success() {
+            bail!("tar extraction failed");
+        }
+    } else {
+        // Extract zip
+        let file = File::open(&temp_path)?;
+        let mut archive = zip::ZipArchive::new(file)?;
+        archive.extract(dest)?;
+    }
     
     // Clean up temp file
     fs::remove_file(&temp_path)?;
