@@ -238,7 +238,12 @@ pub fn use_version(version: &str) -> Result<()> {
 /// - lib path: <plugin>/plugins (for DLL loading path)
 /// - qml path: <plugin>/qml (for QML import path)
 /// 
-/// You can also use --lib and --qml separately for fine-grained control.
+/// For host, the --host option specifies the build output root directory.
+/// The function will automatically derive:
+/// - bin path: <host>/bin (for mpf-host executable)
+/// - qml path: <host>/qml (for QML modules)
+/// 
+/// You can also use --lib, --qml, --bin separately for fine-grained control.
 pub fn link(
     component: &str,
     lib: Option<String>,
@@ -246,6 +251,7 @@ pub fn link(
     plugin: Option<String>,
     headers: Option<String>,
     bin: Option<String>,
+    host: Option<String>,
 ) -> Result<()> {
     // Warn if unknown component
     if !config::is_known_component(component) {
@@ -314,9 +320,38 @@ pub fn link(
         (None, None)
     };
     
-    // Use explicit --lib/--qml if provided, otherwise use derived paths from --plugin
+    // If --host is specified, automatically derive bin and qml paths
+    // --host points to build output root, which contains:
+    //   - bin/ subdirectory for mpf-host executable
+    //   - qml/ subdirectory for QML modules
+    let (derived_bin, derived_host_qml) = if let Some(ref host_root) = host {
+        let host_path = PathBuf::from(host_root);
+        let abs_host_root = if host_path.is_absolute() {
+            host_path
+        } else {
+            cwd.join(host_path)
+        };
+        
+        let bin_path = abs_host_root.join("bin").to_string_lossy().to_string();
+        let qml_path = abs_host_root.join("qml").to_string_lossy().to_string();
+        
+        println!(
+            "{} --host specified, auto-deriving paths from build root:",
+            "Info:".cyan()
+        );
+        println!("  → bin: {}", bin_path);
+        println!("  → qml: {}", qml_path);
+        
+        (Some(bin_path), Some(qml_path))
+    } else {
+        (None, None)
+    };
+    
+    // Use explicit options if provided, otherwise use derived paths
+    // Priority: explicit > --host derived > --plugin derived
     let final_lib = resolve(lib).or(derived_lib);
-    let final_qml = resolve(qml).or(derived_qml);
+    let final_qml = resolve(qml).or(derived_host_qml).or(derived_qml);
+    let final_bin = resolve(bin).or(derived_bin);
     
     let comp_config = ComponentConfig {
         mode: ComponentMode::Source,
@@ -324,7 +359,7 @@ pub fn link(
         qml: final_qml,
         plugin: resolve(plugin),
         headers: resolve(headers),
-        bin: resolve(bin),
+        bin: final_bin,
     };
     
     dev_config.components.insert(component.to_string(), comp_config.clone());

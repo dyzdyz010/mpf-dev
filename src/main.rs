@@ -55,6 +55,10 @@ enum Commands {
         /// Path to executable binary directory (for host component)
         #[arg(long)]
         bin: Option<String>,
+        
+        /// Path to host build output root (auto-derives bin and qml)
+        #[arg(long)]
+        host: Option<String>,
     },
     
     /// Unregister a component from source development
@@ -89,8 +93,8 @@ async fn main() -> Result<()> {
         Commands::Setup { version } => commands::setup(version).await,
         Commands::Versions => commands::versions(),
         Commands::Use { version } => commands::use_version(&version),
-        Commands::Link { component, lib, qml, plugin, headers, bin } => {
-            commands::link(&component, lib, qml, plugin, headers, bin)
+        Commands::Link { component, lib, qml, plugin, headers, bin, host } => {
+            commands::link(&component, lib, qml, plugin, headers, bin, host)
         }
         Commands::Unlink { component } => commands::unlink(&component),
         Commands::Status => commands::status(),
