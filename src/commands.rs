@@ -232,12 +232,20 @@ pub fn use_version(version: &str) -> Result<()> {
 }
 
 /// Link command: register component for source development
+/// 
+/// For plugins, the --plugin option specifies the build output root directory.
+/// The function will automatically derive:
+/// - lib path: <plugin>/plugins (for DLL loading path)
+/// - qml path: <plugin>/qml (for QML import path)
+/// 
+/// You can also use --lib and --qml separately for fine-grained control.
 pub fn link(
     component: &str,
     lib: Option<String>,
     qml: Option<String>,
     plugin: Option<String>,
     headers: Option<String>,
+    bin: Option<String>,
 ) -> Result<()> {
     // Warn if unknown component
     if !config::is_known_component(component) {
@@ -246,6 +254,14 @@ pub fn link(
             "Warning:".yellow(),
             component,
             KNOWN_COMPONENTS.join(", ")
+        );
+    }
+    
+    // Warn if bin is used for non-host component
+    if bin.is_some() && component != "host" {
+        println!(
+            "{} --bin option is typically used for 'host' component only",
+            "Note:".yellow()
         );
     }
     
@@ -264,12 +280,51 @@ pub fn link(
         })
     };
     
+    // If --plugin is specified, automatically derive lib and qml paths
+    // --plugin points to build output root, which contains:
+    //   - plugins/ subdirectory for plugin DLLs (may have mpf/ subfolder)
+    //   - qml/ subdirectory for QML modules
+    let (derived_lib, derived_qml) = if let Some(ref plugin_root) = plugin {
+        let plugin_path = PathBuf::from(plugin_root);
+        let abs_plugin_root = if plugin_path.is_absolute() {
+            plugin_path
+        } else {
+            cwd.join(plugin_path)
+        };
+        
+        // Check for plugins/mpf subdirectory (common CMake output structure)
+        // If it exists, use it; otherwise use plugins/ directly
+        let plugins_mpf_path = abs_plugin_root.join("plugins").join("mpf");
+        let lib_path = if plugins_mpf_path.exists() {
+            plugins_mpf_path.to_string_lossy().to_string()
+        } else {
+            abs_plugin_root.join("plugins").to_string_lossy().to_string()
+        };
+        let qml_path = abs_plugin_root.join("qml").to_string_lossy().to_string();
+        
+        println!(
+            "{} --plugin specified, auto-deriving paths from build root:",
+            "Info:".cyan()
+        );
+        println!("  → lib (plugins): {}", lib_path);
+        println!("  → qml: {}", qml_path);
+        
+        (Some(lib_path), Some(qml_path))
+    } else {
+        (None, None)
+    };
+    
+    // Use explicit --lib/--qml if provided, otherwise use derived paths from --plugin
+    let final_lib = resolve(lib).or(derived_lib);
+    let final_qml = resolve(qml).or(derived_qml);
+    
     let comp_config = ComponentConfig {
         mode: ComponentMode::Source,
-        lib: resolve(lib),
-        qml: resolve(qml),
+        lib: final_lib,
+        qml: final_qml,
         plugin: resolve(plugin),
         headers: resolve(headers),
+        bin: resolve(bin),
     };
     
     dev_config.components.insert(component.to_string(), comp_config.clone());
@@ -281,6 +336,9 @@ pub fn link(
         component
     );
     
+    if let Some(bin) = &comp_config.bin {
+        println!("  bin: {}", bin);
+    }
     if let Some(lib) = &comp_config.lib {
         println!("  lib: {}", lib);
     }
@@ -288,7 +346,7 @@ pub fn link(
         println!("  qml: {}", qml);
     }
     if let Some(plugin) = &comp_config.plugin {
-        println!("  plugin: {}", plugin);
+        println!("  plugin (build root): {}", plugin);
     }
     if let Some(headers) = &comp_config.headers {
         println!("  headers: {}", headers);
@@ -353,6 +411,9 @@ pub fn status() -> Result<()> {
                 ComponentMode::Binary => "binary".dimmed(),
             };
             println!("  {} [{}]", name.bold(), mode_str);
+            if let Some(bin) = &comp.bin {
+                println!("    bin: {}", bin);
+            }
             if let Some(lib) = &comp.lib {
                 println!("    lib: {}", lib);
             }
@@ -373,7 +434,7 @@ pub fn status() -> Result<()> {
 
 /// Env command: print environment variables
 pub fn env_vars() -> Result<()> {
-    let (lib_path, qml_path, plugin_path, _host_path) = build_env_paths()?;
+    let (lib_path, qml_path, plugin_path, mpf_plugin_path, _host_path) = build_env_paths()?;
     
     println!("{}", "# Add these to your shell:".dimmed());
     
@@ -382,6 +443,9 @@ pub fn env_vars() -> Result<()> {
         println!("export LD_LIBRARY_PATH=\"{}\"", lib_path);
         println!("export QML_IMPORT_PATH=\"{}\"", qml_path);
         println!("export QT_PLUGIN_PATH=\"{}\"", plugin_path);
+        if !mpf_plugin_path.is_empty() {
+            println!("export MPF_PLUGIN_PATH=\"{}\"", mpf_plugin_path);
+        }
     }
     
     #[cfg(windows)]
@@ -389,6 +453,9 @@ pub fn env_vars() -> Result<()> {
         println!("set PATH={};%PATH%", lib_path);
         println!("set QML_IMPORT_PATH={}", qml_path);
         println!("set QT_PLUGIN_PATH={}", plugin_path);
+        if !mpf_plugin_path.is_empty() {
+            println!("set MPF_PLUGIN_PATH={}", mpf_plugin_path);
+        }
     }
     
     Ok(())
@@ -401,7 +468,7 @@ pub fn run(debug: bool, args: Vec<String>) -> Result<()> {
         bail!("No SDK version set. Run `mpf-dev setup` first.");
     }
     
-    let (lib_path, qml_path, plugin_path, host_path) = build_env_paths()?;
+    let (lib_path, qml_path, plugin_path, mpf_plugin_path, host_path) = build_env_paths()?;
     
     if !host_path.exists() {
         bail!("mpf-host not found at: {}", host_path.display());
@@ -415,6 +482,9 @@ pub fn run(debug: bool, args: Vec<String>) -> Result<()> {
         println!("  PATH={}", lib_path);
         println!("  QML_IMPORT_PATH={}", qml_path);
         println!("  QT_PLUGIN_PATH={}", plugin_path);
+        if !mpf_plugin_path.is_empty() {
+            println!("  MPF_PLUGIN_PATH={}", mpf_plugin_path);
+        }
         println!();
     }
     
@@ -435,13 +505,20 @@ pub fn run(debug: bool, args: Vec<String>) -> Result<()> {
     cmd.env("QML_IMPORT_PATH", &qml_path);
     cmd.env("QT_PLUGIN_PATH", &plugin_path);
     
+    // Set MPF_PLUGIN_PATH for mpf-host to discover linked plugins
+    // This allows linked source plugins to override SDK binary plugins
+    if !mpf_plugin_path.is_empty() {
+        cmd.env("MPF_PLUGIN_PATH", &mpf_plugin_path);
+    }
+    
     let status = cmd.status()?;
     
     std::process::exit(status.code().unwrap_or(1));
 }
 
 /// Build environment path strings
-fn build_env_paths() -> Result<(String, String, String, PathBuf)> {
+/// Returns: (lib_path, qml_path, qt_plugin_path, mpf_plugin_path, host_path)
+fn build_env_paths() -> Result<(String, String, String, String, PathBuf)> {
     let dev_config = DevConfig::load().unwrap_or_default();
     let sdk = config::current_link();
     
@@ -452,18 +529,33 @@ fn build_env_paths() -> Result<(String, String, String, PathBuf)> {
     let mut lib_paths: Vec<String> = Vec::new();
     let mut qml_paths: Vec<String> = Vec::new();
     let mut plugin_paths: Vec<String> = Vec::new();
+    let mut mpf_plugin_paths: Vec<String> = Vec::new();  // MPF plugin paths for development
+    let mut host_bin_override: Option<String> = None;
     
     // Source components first (higher priority)
     for (name, comp) in &dev_config.components {
         if comp.mode == ComponentMode::Source {
             if let Some(lib) = &comp.lib {
                 lib_paths.push(lib.clone());
+                
+                // For plugin components (not host/sdk), also add to MPF_PLUGIN_PATH
+                // This tells mpf-host where to find the linked plugin DLLs
+                if name != "host" && name != "sdk" {
+                    mpf_plugin_paths.push(lib.clone());
+                }
             }
             if let Some(qml) = &comp.qml {
                 qml_paths.push(qml.clone());
             }
             if let Some(plugin) = &comp.plugin {
                 plugin_paths.push(plugin.clone());
+            }
+            
+            // Check for host component bin override
+            if name == "host" {
+                if let Some(bin) = &comp.bin {
+                    host_bin_override = Some(bin.clone());
+                }
             }
             
             // Debug: show which components are in source mode
@@ -478,16 +570,21 @@ fn build_env_paths() -> Result<(String, String, String, PathBuf)> {
     
     let sep = if cfg!(windows) { ";" } else { ":" };
     
-    let host_path = sdk.join("bin").join(if cfg!(windows) {
-        "mpf-host.exe"
+    // Use linked host bin if available, otherwise use SDK's mpf-host
+    let host_exe_name = if cfg!(windows) { "mpf-host.exe" } else { "mpf-host" };
+    let host_path = if let Some(bin_dir) = host_bin_override {
+        let linked_host = PathBuf::from(&bin_dir).join(host_exe_name);
+        eprintln!("{} Using linked host: {}", "→".cyan(), linked_host.display());
+        linked_host
     } else {
-        "mpf-host"
-    });
+        sdk.join("bin").join(host_exe_name)
+    };
     
     Ok((
         lib_paths.join(sep),
         qml_paths.join(sep),
         plugin_paths.join(sep),
+        mpf_plugin_paths.join(sep),
         host_path,
     ))
 }

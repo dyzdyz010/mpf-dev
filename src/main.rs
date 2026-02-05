@@ -33,7 +33,7 @@ enum Commands {
     
     /// Register a component for source development
     Link {
-        /// Component name (e.g., http-client, ui-components, plugin-orders)
+        /// Component name (e.g., http-client, ui-components, plugin-orders, host)
         component: String,
         
         /// Path to built library directory
@@ -51,6 +51,10 @@ enum Commands {
         /// Path to include directory (for headers)
         #[arg(long, alias = "include")]
         headers: Option<String>,
+        
+        /// Path to executable binary directory (for host component)
+        #[arg(long)]
+        bin: Option<String>,
     },
     
     /// Unregister a component from source development
@@ -85,8 +89,8 @@ async fn main() -> Result<()> {
         Commands::Setup { version } => commands::setup(version).await,
         Commands::Versions => commands::versions(),
         Commands::Use { version } => commands::use_version(&version),
-        Commands::Link { component, lib, qml, plugin, headers } => {
-            commands::link(&component, lib, qml, plugin, headers)
+        Commands::Link { component, lib, qml, plugin, headers, bin } => {
+            commands::link(&component, lib, qml, plugin, headers, bin)
         }
         Commands::Unlink { component } => commands::unlink(&component),
         Commands::Status => commands::status(),

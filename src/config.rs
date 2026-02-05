@@ -62,6 +62,10 @@ pub struct ComponentConfig {
     
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<String>,
+    
+    /// Path to executable binary directory (for host component)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bin: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
