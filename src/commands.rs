@@ -434,9 +434,12 @@ pub fn status() -> Result<()> {
 
 /// Env command: print environment variables
 pub fn env_vars() -> Result<()> {
-    let (lib_path, qml_path, plugin_path, mpf_plugin_path, _host_path) = build_env_paths()?;
+    let (sdk_root, lib_path, qml_path, plugin_path, mpf_plugin_path, _host_path) = build_env_paths()?;
     
     println!("{}", "# Add these to your shell:".dimmed());
+    
+    // MPF_SDK_ROOT is always set - tells mpf-host where the SDK is installed
+    println!("export MPF_SDK_ROOT=\"{}\"", sdk_root);
     
     #[cfg(unix)]
     {
@@ -450,6 +453,7 @@ pub fn env_vars() -> Result<()> {
     
     #[cfg(windows)]
     {
+        println!("set MPF_SDK_ROOT={}", sdk_root);
         println!("set PATH={};%PATH%", lib_path);
         println!("set QML_IMPORT_PATH={}", qml_path);
         println!("set QT_PLUGIN_PATH={}", plugin_path);
@@ -468,7 +472,7 @@ pub fn run(debug: bool, args: Vec<String>) -> Result<()> {
         bail!("No SDK version set. Run `mpf-dev setup` first.");
     }
     
-    let (lib_path, qml_path, plugin_path, mpf_plugin_path, host_path) = build_env_paths()?;
+    let (sdk_root, lib_path, qml_path, plugin_path, mpf_plugin_path, host_path) = build_env_paths()?;
     
     if !host_path.exists() {
         bail!("mpf-host not found at: {}", host_path.display());
@@ -476,6 +480,7 @@ pub fn run(debug: bool, args: Vec<String>) -> Result<()> {
     
     if debug {
         println!("{}", "Running with development overrides:".dimmed());
+        println!("  MPF_SDK_ROOT={}", sdk_root);
         #[cfg(unix)]
         println!("  LD_LIBRARY_PATH={}", lib_path);
         #[cfg(windows)]
@@ -490,6 +495,10 @@ pub fn run(debug: bool, args: Vec<String>) -> Result<()> {
     
     let mut cmd = Command::new(&host_path);
     cmd.args(&args);
+    
+    // MPF_SDK_ROOT tells mpf-host where the SDK is installed
+    // This is the primary way mpf-host discovers its paths
+    cmd.env("MPF_SDK_ROOT", &sdk_root);
     
     #[cfg(unix)]
     {
@@ -517,14 +526,17 @@ pub fn run(debug: bool, args: Vec<String>) -> Result<()> {
 }
 
 /// Build environment path strings
-/// Returns: (lib_path, qml_path, qt_plugin_path, mpf_plugin_path, host_path)
-fn build_env_paths() -> Result<(String, String, String, String, PathBuf)> {
+/// Returns: (sdk_root, lib_path, qml_path, qt_plugin_path, mpf_plugin_path, host_path)
+fn build_env_paths() -> Result<(String, String, String, String, String, PathBuf)> {
     let dev_config = DevConfig::load().unwrap_or_default();
     let sdk = config::current_link();
     
     if !sdk.exists() {
         bail!("No SDK version set. Run `mpf-dev setup` first.");
     }
+    
+    // SDK root path (used by mpf-host to find default paths)
+    let sdk_root = sdk.to_string_lossy().to_string();
     
     let mut lib_paths: Vec<String> = Vec::new();
     let mut qml_paths: Vec<String> = Vec::new();
@@ -581,6 +593,7 @@ fn build_env_paths() -> Result<(String, String, String, String, PathBuf)> {
     };
     
     Ok((
+        sdk_root,
         lib_paths.join(sep),
         qml_paths.join(sep),
         plugin_paths.join(sep),
