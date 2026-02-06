@@ -491,15 +491,24 @@ pub fn status() -> Result<()> {
 pub fn env_vars() -> Result<()> {
     let (sdk_root, lib_path, qml_path, plugin_path, mpf_plugin_path, _host_path) = build_env_paths()?;
     
-    println!("{}", "# Add these to your shell:".dimmed());
+    println!("{}", "# MPF Development Environment".bold().cyan());
+    println!("{}", "# Add these to your shell or IDE:".dimmed());
+    println!();
     
-    // MPF_SDK_ROOT is always set - tells mpf-host where the SDK is installed
-    println!("export MPF_SDK_ROOT=\"{}\"", sdk_root);
+    // Detect Qt path from common locations
+    let qt_hint = detect_qt_path();
     
     #[cfg(unix)]
     {
-        println!("export LD_LIBRARY_PATH=\"{}\"", lib_path);
+        println!("{}", "# === Unix/Linux/macOS ===".green());
+        println!("export MPF_SDK_ROOT=\"{}\"", sdk_root);
+        if let Some(ref qt) = qt_hint {
+            println!("export CMAKE_PREFIX_PATH=\"{};{}\"", qt, sdk_root);
+        } else {
+            println!("export CMAKE_PREFIX_PATH=\"$QT_DIR;{}\"  # Set QT_DIR to your Qt path", sdk_root);
+        }
         println!("export QML_IMPORT_PATH=\"{}\"", qml_path);
+        println!("export LD_LIBRARY_PATH=\"{}\"", lib_path);
         println!("export QT_PLUGIN_PATH=\"{}\"", plugin_path);
         if !mpf_plugin_path.is_empty() {
             println!("export MPF_PLUGIN_PATH=\"{}\"", mpf_plugin_path);
@@ -508,16 +517,81 @@ pub fn env_vars() -> Result<()> {
     
     #[cfg(windows)]
     {
+        println!("{}", "# === Windows (CMD) ===".green());
         println!("set MPF_SDK_ROOT={}", sdk_root);
-        println!("set PATH={};%PATH%", lib_path);
+        if let Some(ref qt) = qt_hint {
+            println!("set CMAKE_PREFIX_PATH={};{}", qt, sdk_root);
+        } else {
+            println!("set CMAKE_PREFIX_PATH=C:\\Qt\\6.8.3\\mingw_64;{}", sdk_root);
+        }
         println!("set QML_IMPORT_PATH={}", qml_path);
+        println!("set PATH={};%PATH%", lib_path);
         println!("set QT_PLUGIN_PATH={}", plugin_path);
         if !mpf_plugin_path.is_empty() {
             println!("set MPF_PLUGIN_PATH={}", mpf_plugin_path);
         }
+        
+        println!();
+        println!("{}", "# === Windows (PowerShell) ===".green());
+        println!("$env:MPF_SDK_ROOT=\"{}\"", sdk_root);
+        if let Some(ref qt) = qt_hint {
+            println!("$env:CMAKE_PREFIX_PATH=\"{};{}\"", qt, sdk_root);
+        } else {
+            println!("$env:CMAKE_PREFIX_PATH=\"C:\\Qt\\6.8.3\\mingw_64;{}\"", sdk_root);
+        }
+        println!("$env:QML_IMPORT_PATH=\"{}\"", qml_path);
+        println!("$env:PATH=\"{};$env:PATH\"", lib_path);
     }
     
+    println!();
+    println!("{}", "# Then configure CMake:".dimmed());
+    println!("{}", "#   cmake -B build -G \"MinGW Makefiles\"  # Windows".dimmed());
+    println!("{}", "#   cmake -B build -G Ninja                # Linux".dimmed());
+    
     Ok(())
+}
+
+/// Try to detect Qt installation path
+fn detect_qt_path() -> Option<String> {
+    // Check environment first
+    if let Ok(qt_dir) = std::env::var("QT_DIR") {
+        return Some(qt_dir);
+    }
+    if let Ok(qt_dir) = std::env::var("Qt6_DIR") {
+        return Some(qt_dir);
+    }
+    
+    // Check common paths
+    #[cfg(windows)]
+    {
+        let common_paths = [
+            "C:\\Qt\\6.8.3\\mingw_64",
+            "C:\\Qt\\6.8.2\\mingw_64",
+            "C:\\Qt\\6.8.1\\mingw_64",
+            "C:\\Qt\\6.8.0\\mingw_64",
+        ];
+        for path in common_paths {
+            if std::path::Path::new(path).exists() {
+                return Some(path.to_string());
+            }
+        }
+    }
+    
+    #[cfg(unix)]
+    {
+        let common_paths = [
+            "/opt/qt6",
+            "/usr/local/Qt-6.8.3",
+            "/usr/lib/qt6",
+        ];
+        for path in common_paths {
+            if std::path::Path::new(path).exists() {
+                return Some(path.to_string());
+            }
+        }
+    }
+    
+    None
 }
 
 /// Run command: execute mpf-host with development overrides
