@@ -321,9 +321,10 @@ pub fn link(
     };
     
     // If --host is specified, automatically derive bin and qml paths
-    // --host points to build output root, which contains:
-    //   - bin/ subdirectory for mpf-host executable
-    //   - qml/ subdirectory for QML modules
+    // --host points to build output root
+    // Qt Creator outputs can be in different structures:
+    //   - bin/mpf-host.exe (CMake default)
+    //   - mpf-host.exe (Qt Creator sometimes puts it at root)
     let (derived_bin, derived_host_qml) = if let Some(ref host_root) = host {
         let host_path = PathBuf::from(host_root);
         let abs_host_root = if host_path.is_absolute() {
@@ -332,15 +333,34 @@ pub fn link(
             cwd.join(host_path)
         };
         
-        let bin_path = abs_host_root.join("bin").to_string_lossy().to_string();
-        let qml_path = abs_host_root.join("qml").to_string_lossy().to_string();
+        let host_exe = if cfg!(windows) { "mpf-host.exe" } else { "mpf-host" };
+        
+        // Try to find mpf-host executable in different locations
+        let bin_path = if abs_host_root.join("bin").join(host_exe).exists() {
+            // Standard CMake layout: bin/mpf-host.exe
+            abs_host_root.join("bin").to_string_lossy().to_string()
+        } else if abs_host_root.join(host_exe).exists() {
+            // Qt Creator sometimes puts exe at build root
+            abs_host_root.to_string_lossy().to_string()
+        } else {
+            // Default to bin/ even if not found yet (might be built later)
+            abs_host_root.join("bin").to_string_lossy().to_string()
+        };
+        
+        // Try to find qml directory
+        let qml_path = if abs_host_root.join("qml").exists() {
+            abs_host_root.join("qml").to_string_lossy().to_string()
+        } else {
+            // Qt Creator might put it at build root
+            abs_host_root.to_string_lossy().to_string()
+        };
         
         println!(
             "{} --host specified, auto-deriving paths from build root:",
             "Info:".cyan()
         );
-        println!("  → bin: {}", bin_path);
-        println!("  → qml: {}", qml_path);
+        println!("  -> bin: {}", bin_path);
+        println!("  -> qml: {}", qml_path);
         
         (Some(bin_path), Some(qml_path))
     } else {
