@@ -18,12 +18,19 @@ const GITHUB_REPO: &str = "dyzdyz010/mpf-release";
 /// Normalize a path by removing .\ and .. components
 fn normalize_path(p: PathBuf) -> String {
     // Try to canonicalize, fall back to string cleanup
-    if let Ok(canonical) = p.canonicalize() {
+    let result = if let Ok(canonical) = p.canonicalize() {
         canonical.to_string_lossy().to_string()
     } else {
         // Path doesn't exist yet, just clean up the string
         let s = p.to_string_lossy().to_string();
         s.replace("\\.\\", "\\").replace("/./", "/")
+    };
+    
+    // Remove Windows extended path prefix (\\?\)
+    if result.starts_with(r"\\?\") {
+        result[4..].to_string()
+    } else {
+        result
     }
 }
 
