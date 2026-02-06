@@ -11,6 +11,7 @@ use std::process::Command;
 use crate::config::{
     self, ComponentConfig, ComponentMode, DevConfig, KNOWN_COMPONENTS,
 };
+use crate::LinkAction;
 
 const GITHUB_REPO: &str = "dyzdyz010/mpf-release";
 
@@ -243,7 +244,168 @@ pub fn use_version(version: &str) -> Result<()> {
     Ok(())
 }
 
-/// Link command: register component for source development
+/// New link action handler - dispatches to appropriate link function
+pub fn link_action(action: LinkAction) -> Result<()> {
+    match action {
+        LinkAction::Plugin { name, path } => link_plugin(&name, &path),
+        LinkAction::Host { path } => link_host(&path),
+        LinkAction::Component { name, path } => link_component(&name, &path),
+        LinkAction::Manual { name, lib, qml, plugin, headers, bin } => {
+            link(&name, lib, qml, plugin, headers, bin, None)
+        }
+    }
+}
+
+/// Link a plugin - auto-derives lib, qml, plugin paths from build directory
+pub fn link_plugin(name: &str, path: &str) -> Result<()> {
+    let cwd = env::current_dir()?;
+    let build_path = PathBuf::from(path);
+    let abs_path = PathBuf::from(normalize_path(if build_path.is_absolute() {
+        build_path
+    } else {
+        cwd.join(build_path)
+    }));
+    
+    // Auto-derive paths from plugin build output
+    let plugins_mpf_path = abs_path.join("plugins").join("mpf");
+    let lib_path = if plugins_mpf_path.exists() {
+        normalize_path(plugins_mpf_path)
+    } else {
+        normalize_path(abs_path.join("plugins"))
+    };
+    let qml_path = normalize_path(abs_path.join("qml"));
+    let plugin_path = normalize_path(abs_path.clone());
+    
+    println!("{} Linking plugin '{}'", "→".cyan(), name);
+    println!("  Build root: {}", abs_path.display());
+    println!("  lib (plugins): {}", lib_path);
+    println!("  qml: {}", qml_path);
+    
+    let mut dev_config = DevConfig::load().unwrap_or_default();
+    
+    // Store as "plugin-<name>" for clarity
+    let component_name = if name.starts_with("plugin-") {
+        name.to_string()
+    } else {
+        format!("plugin-{}", name)
+    };
+    
+    dev_config.components.insert(component_name.clone(), ComponentConfig {
+        mode: ComponentMode::Source,
+        lib: Some(lib_path),
+        qml: Some(qml_path),
+        plugin: Some(plugin_path),
+        headers: None,
+        bin: None,
+    });
+    dev_config.save()?;
+    
+    println!("{} Plugin '{}' linked", "✓".green(), component_name);
+    Ok(())
+}
+
+/// Link host - auto-derives bin, qml paths from build directory
+pub fn link_host(path: &str) -> Result<()> {
+    let cwd = env::current_dir()?;
+    let build_path = PathBuf::from(path);
+    let abs_path = PathBuf::from(normalize_path(if build_path.is_absolute() {
+        build_path
+    } else {
+        cwd.join(build_path)
+    }));
+    
+    let host_exe = if cfg!(windows) { "mpf-host.exe" } else { "mpf-host" };
+    
+    // Auto-derive bin path
+    let bin_path = if abs_path.join("bin").join(host_exe).exists() {
+        normalize_path(abs_path.join("bin"))
+    } else if abs_path.join(host_exe).exists() {
+        normalize_path(abs_path.clone())
+    } else {
+        normalize_path(abs_path.join("bin"))
+    };
+    
+    // Auto-derive qml path
+    let qml_path = if abs_path.join("qml").exists() {
+        normalize_path(abs_path.join("qml"))
+    } else {
+        normalize_path(abs_path.clone())
+    };
+    
+    println!("{} Linking host", "→".cyan());
+    println!("  Build root: {}", abs_path.display());
+    println!("  bin: {}", bin_path);
+    println!("  qml: {}", qml_path);
+    
+    let mut dev_config = DevConfig::load().unwrap_or_default();
+    dev_config.components.insert("host".to_string(), ComponentConfig {
+        mode: ComponentMode::Source,
+        lib: None,
+        qml: Some(qml_path),
+        plugin: None,
+        headers: None,
+        bin: Some(bin_path),
+    });
+    dev_config.save()?;
+    
+    println!("{} Host linked", "✓".green());
+    Ok(())
+}
+
+/// Link a library component (ui-components, http-client, etc.)
+pub fn link_component(name: &str, path: &str) -> Result<()> {
+    let cwd = env::current_dir()?;
+    let build_path = PathBuf::from(path);
+    let abs_path = PathBuf::from(normalize_path(if build_path.is_absolute() {
+        build_path
+    } else {
+        cwd.join(build_path)
+    }));
+    
+    // Auto-derive paths based on component type
+    let lib_path = if abs_path.join("lib").exists() {
+        Some(normalize_path(abs_path.join("lib")))
+    } else if abs_path.join("bin").exists() {
+        // Windows DLLs often go in bin/
+        Some(normalize_path(abs_path.join("bin")))
+    } else {
+        Some(normalize_path(abs_path.clone()))
+    };
+    
+    let qml_path = if abs_path.join("qml").exists() {
+        Some(normalize_path(abs_path.join("qml")))
+    } else {
+        None
+    };
+    
+    let headers_path = if abs_path.join("include").exists() {
+        Some(normalize_path(abs_path.join("include")))
+    } else {
+        None
+    };
+    
+    println!("{} Linking component '{}'", "→".cyan(), name);
+    println!("  Build root: {}", abs_path.display());
+    if let Some(ref p) = lib_path { println!("  lib: {}", p); }
+    if let Some(ref p) = qml_path { println!("  qml: {}", p); }
+    if let Some(ref p) = headers_path { println!("  headers: {}", p); }
+    
+    let mut dev_config = DevConfig::load().unwrap_or_default();
+    dev_config.components.insert(name.to_string(), ComponentConfig {
+        mode: ComponentMode::Source,
+        lib: lib_path,
+        qml: qml_path,
+        plugin: None,
+        headers: headers_path,
+        bin: None,
+    });
+    dev_config.save()?;
+    
+    println!("{} Component '{}' linked", "✓".green(), name);
+    Ok(())
+}
+
+/// Link command: register component for source development (legacy interface)
 /// 
 /// For plugins, the --plugin option specifies the build output root directory.
 /// The function will automatically derive:
@@ -426,21 +588,30 @@ pub fn link(
 pub fn unlink(component: &str) -> Result<()> {
     let mut dev_config = DevConfig::load()?;
     
-    if dev_config.components.remove(component).is_some() {
+    if component == "all" {
+        let count = dev_config.components.len();
+        dev_config.components.clear();
         dev_config.save()?;
-        println!(
-            "{} Component '{}' unlinked",
-            "✓".green(),
-            component
-        );
-    } else {
-        println!(
-            "{} Component '{}' was not linked",
-            "Note:".yellow(),
-            component
-        );
+        println!("{} Unlinked {} component(s)", "✓".green(), count);
+        return Ok(());
     }
     
+    // Try exact match first
+    if dev_config.components.remove(component).is_some() {
+        dev_config.save()?;
+        println!("{} Component '{}' unlinked", "✓".green(), component);
+        return Ok(());
+    }
+    
+    // Try with plugin- prefix
+    let with_prefix = format!("plugin-{}", component);
+    if dev_config.components.remove(&with_prefix).is_some() {
+        dev_config.save()?;
+        println!("{} Plugin '{}' unlinked", "✓".green(), component);
+        return Ok(());
+    }
+    
+    println!("{} Component '{}' was not linked", "Note:".yellow(), component);
     Ok(())
 }
 
@@ -454,47 +625,88 @@ pub fn status() -> Result<()> {
     println!();
     
     // SDK info
-    println!("{}", "SDK:".bold());
+    println!("{}", "📦 SDK".bold());
     println!("  Root: {}", sdk_root.display());
     if let Some(v) = &current {
-        println!("  Current version: {}", v.green());
+        println!("  Version: {}", v.green());
     } else {
-        println!("  Current version: {}", "not set".red());
+        println!("  Version: {}", "not set".red());
     }
-    
-    // Config file location
-    println!("  Config: {}", config::dev_config_path().display());
     println!();
     
-    // Components
-    println!("{}", "Components:".bold());
-    if dev_config.components.is_empty() {
-        println!("  No components linked for source development.");
-        println!("  Use {} to register a component.", "mpf-dev link <component>".cyan());
+    // Group components by type
+    let mut host: Option<(&String, &ComponentConfig)> = None;
+    let mut plugins: Vec<(&String, &ComponentConfig)> = Vec::new();
+    let mut libs: Vec<(&String, &ComponentConfig)> = Vec::new();
+    
+    for (name, comp) in &dev_config.components {
+        if name == "host" {
+            host = Some((name, comp));
+        } else if name.starts_with("plugin-") || name.contains("plugin") {
+            plugins.push((name, comp));
+        } else {
+            libs.push((name, comp));
+        }
+    }
+    
+    // Host section
+    println!("{}", "🖥️  Host".bold());
+    if let Some((_, comp)) = host {
+        if let Some(bin) = &comp.bin {
+            println!("  {} bin: {}", "✓".green(), bin);
+        }
+        if let Some(qml) = &comp.qml {
+            println!("    qml: {}", qml);
+        }
     } else {
-        for (name, comp) in &dev_config.components {
-            let mode_str = match comp.mode {
-                ComponentMode::Source => "source".green(),
-                ComponentMode::Binary => "binary".dimmed(),
-            };
-            println!("  {} [{}]", name.bold(), mode_str);
-            if let Some(bin) = &comp.bin {
-                println!("    bin: {}", bin);
-            }
+        println!("  {} Not linked", "○".dimmed());
+        println!("  {}", "mpf-dev link host <build-path>".dimmed());
+    }
+    println!();
+    
+    // Plugins section
+    println!("{}", "🔌 Plugins".bold());
+    if plugins.is_empty() {
+        println!("  {} None linked", "○".dimmed());
+        println!("  {}", "mpf-dev link plugin <name> <build-path>".dimmed());
+    } else {
+        for (name, comp) in &plugins {
+            let display_name = name.strip_prefix("plugin-").unwrap_or(name);
+            println!("  {} {}", "✓".green(), display_name.bold());
             if let Some(lib) = &comp.lib {
                 println!("    lib: {}", lib);
             }
             if let Some(qml) = &comp.qml {
                 println!("    qml: {}", qml);
             }
-            if let Some(plugin) = &comp.plugin {
-                println!("    plugin: {}", plugin);
+        }
+    }
+    println!();
+    
+    // Libraries section
+    println!("{}", "📚 Libraries".bold());
+    if libs.is_empty() {
+        println!("  {} None linked", "○".dimmed());
+        println!("  {}", "mpf-dev link component <name> <build-path>".dimmed());
+    } else {
+        for (name, comp) in &libs {
+            println!("  {} {}", "✓".green(), name.bold());
+            if let Some(lib) = &comp.lib {
+                println!("    lib: {}", lib);
+            }
+            if let Some(qml) = &comp.qml {
+                println!("    qml: {}", qml);
             }
             if let Some(headers) = &comp.headers {
                 println!("    headers: {}", headers);
             }
         }
     }
+    println!();
+    
+    // Config file location
+    println!("{}", "📝 Config".bold());
+    println!("  {}", config::dev_config_path().display());
     
     Ok(())
 }

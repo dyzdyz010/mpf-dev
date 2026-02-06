@@ -31,39 +31,15 @@ enum Commands {
         version: String,
     },
     
-    /// Register a component for source development
+    /// Link a component for source development
     Link {
-        /// Component name (e.g., http-client, ui-components, plugin-orders, host)
-        component: String,
-        
-        /// Path to built library directory
-        #[arg(long)]
-        lib: Option<String>,
-        
-        /// Path to QML modules directory
-        #[arg(long)]
-        qml: Option<String>,
-        
-        /// Path to plugin directory (for plugins)
-        #[arg(long)]
-        plugin: Option<String>,
-        
-        /// Path to include directory (for headers)
-        #[arg(long, alias = "include")]
-        headers: Option<String>,
-        
-        /// Path to executable binary directory (for host component)
-        #[arg(long)]
-        bin: Option<String>,
-        
-        /// Path to host build output root (auto-derives bin and qml)
-        #[arg(long)]
-        host: Option<String>,
+        #[command(subcommand)]
+        action: LinkAction,
     },
     
     /// Unregister a component from source development
     Unlink {
-        /// Component name
+        /// Component name (or "all" to unlink everything)
         component: String,
     },
     
@@ -88,6 +64,52 @@ enum Commands {
     Workspace {
         #[command(subcommand)]
         action: WorkspaceAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum LinkAction {
+    /// Link a plugin build output (auto-derives lib, qml, plugin paths)
+    Plugin {
+        /// Plugin name (e.g., orders, rules)
+        name: String,
+        /// Path to plugin build output directory
+        path: String,
+    },
+    
+    /// Link the host build output (auto-derives bin, qml paths)
+    Host {
+        /// Path to host build output directory
+        path: String,
+    },
+    
+    /// Link a library component (ui-components, http-client, etc.)
+    Component {
+        /// Component name (e.g., ui-components, http-client)
+        name: String,
+        /// Path to component build output directory
+        path: String,
+    },
+    
+    /// Link with manual path specification (advanced)
+    Manual {
+        /// Component name
+        name: String,
+        /// Path to library directory
+        #[arg(long)]
+        lib: Option<String>,
+        /// Path to QML directory
+        #[arg(long)]
+        qml: Option<String>,
+        /// Path to plugin directory
+        #[arg(long)]
+        plugin: Option<String>,
+        /// Path to headers/include directory
+        #[arg(long)]
+        headers: Option<String>,
+        /// Path to bin directory
+        #[arg(long)]
+        bin: Option<String>,
     },
 }
 
@@ -126,9 +148,7 @@ async fn main() -> Result<()> {
         Commands::Setup { version } => commands::setup(version).await,
         Commands::Versions => commands::versions(),
         Commands::Use { version } => commands::use_version(&version),
-        Commands::Link { component, lib, qml, plugin, headers, bin, host } => {
-            commands::link(&component, lib, qml, plugin, headers, bin, host)
-        }
+        Commands::Link { action } => commands::link_action(action),
         Commands::Unlink { component } => commands::unlink(&component),
         Commands::Status => commands::status(),
         Commands::Env => commands::env_vars(),
@@ -141,3 +161,6 @@ async fn main() -> Result<()> {
         },
     }
 }
+
+// Re-export LinkAction for use in commands module
+pub use crate::LinkAction;
