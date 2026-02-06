@@ -14,6 +14,18 @@ use crate::config::{
 
 const GITHUB_REPO: &str = "dyzdyz010/mpf-release";
 
+/// Normalize a path by removing .\ and .. components
+fn normalize_path(p: PathBuf) -> String {
+    // Try to canonicalize, fall back to string cleanup
+    if let Ok(canonical) = p.canonicalize() {
+        canonical.to_string_lossy().to_string()
+    } else {
+        // Path doesn't exist yet, just clean up the string
+        let s = p.to_string_lossy().to_string();
+        s.replace("\\.\\", "\\").replace("/./", "/")
+    }
+}
+
 /// Setup command: download and install SDK
 pub async fn setup(version: Option<String>) -> Result<()> {
     println!("{}", "MPF SDK Setup".bold().cyan());
@@ -273,15 +285,15 @@ pub fn link(
     
     let mut dev_config = DevConfig::load().unwrap_or_default();
     
-    // Resolve paths to absolute
+    // Resolve paths to absolute and normalize (remove .\ and ..)
     let cwd = env::current_dir()?;
     let resolve = |p: Option<String>| -> Option<String> {
         p.map(|s| {
             let path = PathBuf::from(&s);
             if path.is_absolute() {
-                s
+                normalize_path(path)
             } else {
-                cwd.join(path).to_string_lossy().to_string()
+                normalize_path(cwd.join(path))
             }
         })
     };
@@ -292,21 +304,21 @@ pub fn link(
     //   - qml/ subdirectory for QML modules
     let (derived_lib, derived_qml) = if let Some(ref plugin_root) = plugin {
         let plugin_path = PathBuf::from(plugin_root);
-        let abs_plugin_root = if plugin_path.is_absolute() {
+        let abs_plugin_root = PathBuf::from(normalize_path(if plugin_path.is_absolute() {
             plugin_path
         } else {
             cwd.join(plugin_path)
-        };
+        }));
         
         // Check for plugins/mpf subdirectory (common CMake output structure)
         // If it exists, use it; otherwise use plugins/ directly
         let plugins_mpf_path = abs_plugin_root.join("plugins").join("mpf");
         let lib_path = if plugins_mpf_path.exists() {
-            plugins_mpf_path.to_string_lossy().to_string()
+            normalize_path(plugins_mpf_path)
         } else {
-            abs_plugin_root.join("plugins").to_string_lossy().to_string()
+            normalize_path(abs_plugin_root.join("plugins"))
         };
-        let qml_path = abs_plugin_root.join("qml").to_string_lossy().to_string();
+        let qml_path = normalize_path(abs_plugin_root.join("qml"));
         
         println!(
             "{} --plugin specified, auto-deriving paths from build root:",
@@ -327,32 +339,32 @@ pub fn link(
     //   - mpf-host.exe (Qt Creator sometimes puts it at root)
     let (derived_bin, derived_host_qml) = if let Some(ref host_root) = host {
         let host_path = PathBuf::from(host_root);
-        let abs_host_root = if host_path.is_absolute() {
+        let abs_host_root = PathBuf::from(normalize_path(if host_path.is_absolute() {
             host_path
         } else {
             cwd.join(host_path)
-        };
+        }));
         
         let host_exe = if cfg!(windows) { "mpf-host.exe" } else { "mpf-host" };
         
         // Try to find mpf-host executable in different locations
         let bin_path = if abs_host_root.join("bin").join(host_exe).exists() {
             // Standard CMake layout: bin/mpf-host.exe
-            abs_host_root.join("bin").to_string_lossy().to_string()
+            normalize_path(abs_host_root.join("bin"))
         } else if abs_host_root.join(host_exe).exists() {
             // Qt Creator sometimes puts exe at build root
-            abs_host_root.to_string_lossy().to_string()
+            normalize_path(abs_host_root.clone())
         } else {
             // Default to bin/ even if not found yet (might be built later)
-            abs_host_root.join("bin").to_string_lossy().to_string()
+            normalize_path(abs_host_root.join("bin"))
         };
         
         // Try to find qml directory
         let qml_path = if abs_host_root.join("qml").exists() {
-            abs_host_root.join("qml").to_string_lossy().to_string()
+            normalize_path(abs_host_root.join("qml"))
         } else {
             // Qt Creator might put it at build root
-            abs_host_root.to_string_lossy().to_string()
+            normalize_path(abs_host_root.clone())
         };
         
         println!(
