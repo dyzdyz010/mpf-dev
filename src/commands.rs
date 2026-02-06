@@ -553,6 +553,10 @@ pub fn env_vars() -> Result<()> {
         }
         println!("$env:QML_IMPORT_PATH=\"{}\"", qml_path);
         println!("$env:PATH=\"{};$env:PATH\"", lib_path);
+        println!("$env:QT_PLUGIN_PATH=\"{}\"", plugin_path);
+        if !mpf_plugin_path.is_empty() {
+            println!("$env:MPF_PLUGIN_PATH=\"{}\"", mpf_plugin_path);
+        }
     }
     
     println!();
